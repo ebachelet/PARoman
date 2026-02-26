@@ -1,4 +1,5 @@
 import numpy as np
+import matplotlib.pyplot as plt
 
 
 import pyLIMA.event
@@ -135,16 +136,14 @@ def simulate_microlensing_PSPL(roman_telescope, resolution=50, ra=270, dec=-30):
     return lcs,events_grid
     
     
-def astrometric_noise_from_SNR(ra, dec, thetaE, target_SNR=10):
-    
-    # SNR = 3 marginal, 5 good, 10 strong
-    delta_c_max = thetaE / (np.sqrt(2)*2) # u0=sqrt(2)
-    rms_astrometry = delta_c_max / target_SNR  # in mas
-    
-    obs_ra = np.random.normal(ra, rms_astrometry/1000/3600)
-    obs_dec = np.random.normal(dec, rms_astrometry/1000/3600)
-    
-    return obs_ra, obs_dec, rms_astrometry
+def astrometric_noise(ra,dec, level = 5): #mas
+
+
+    obs_ra = np.random.normal(ra,level/1000/3600)
+    obs_dec = np.random.normal(dec,level/1000/3600)
+
+
+    return obs_ra,obs_dec
 
 output_dir = './output/'
 roman_positions = np.load("roman_ephemerides.npy")
@@ -152,15 +151,34 @@ time = roman_positions[:,0]
 
 t0 = 2458750                     # Time of maximum (HJD)
 Ds = 8.                         # Source distance (kpc)
-Dl = 2.                          # Lens distance (kpc)
-mass = 10.0                       # Lens mass (Solar masses)
-pirel = 1/Dl-1/Ds                
-thetaE = (8.144*mass*pirel)**0.5 
+Dl = 3.                          # Lens distance (kpc)
+#mass = 30                       # Lens mass (Solar masses)
+#pirel = 1/Dl-1/Ds                
+#thetaE = (8.144*mass*pirel)**0.5 
 
-mu = 8.0                           # Relative proper motion (mas/yr)
+mu = 6                           # Relative proper motion (mas/yr)
 
-# SNR
-astrometric_SNR = 10                # Astrometric error parameter
+rms_astrometry = 0.15                # Astrometric error (mas)
+
+# Mass grid
+mass_grid = np.logspace(np.log10(3), np.log10(1000), 20)
+
+N_trials = 50
+
+results_mass_study = []
+
+for mass in mass_grid:
+    print(f"\nSimulating M = {mass:.1f} M☉")
+    
+    pirel = 1/Dl - 1/Ds
+    thetaE = (8.144 * mass * pirel)**0.5
+    tE = thetaE/mu * 365.25
+
+    for trial in range(N_trials):
+        # Random variations
+        u0_trial = np.random.uniform(0.1, 0.3)
+        rms_trial = np.random.uniform(0.1, 0.2)
+        params = [t0, 0.2, thetaE/mu*365.25, thetaE, 1/Ds, -14.901418237131544, -6.013223990947537, -30.0, 270.0, 0.15843220222104726, -0.20748697386621207, 307.3813961361, 1086.2263480900185]
 
 
 roman_telescope = pyLIMA_telescope_simulation(time)
@@ -169,16 +187,14 @@ roman_event =  pyLIMA_event_simulation(roman_telescope, ra=270, dec=-30)
 
 pspl = pyLIMA.models.PSPL_model.PSPLmodel(roman_event,parallax=['Full',t0])
 
-params = [t0, 0.08, thetaE/mu*365.25, thetaE, 1/Ds, -14.901418237131544, -6.013223990947537, -30.0, 270.0, 0.15843220222104726, -0.20748697386621207, 307.3813961361, 1086.2263480900185]
+#params = [t0, 0.2, thetaE/mu*365.25, thetaE, 1/Ds, -14.901418237131544, -6.013223990947537, -30.0, 270.0, 0.15843220222104726, -0.20748697386621207, 307.3813961361, 1086.2263480900185]
         # [0] Time of maximum, [1] u0 (impact parameter in θ_E)
 
 pyLIMA.simulations.simulator. simulate_lightcurve(pspl,pspl.compute_pyLIMA_parameters(params),add_noise=True)
 pyLIMA.simulations.simulator. simulate_astrometry(pspl,pspl.compute_pyLIMA_parameters(params),add_noise=False)
 
 
-obs_ra,obs_dec = astrometric_noise_from_SNR(roman_telescope.astrometry['ra'].value,roman_telescope.astrometry['dec'].value, thetaE, target_SNR = astrometric_SNR)
-
-
+obs_ra,obs_dec = astrometric_noise(roman_telescope.astrometry['ra'].value,roman_telescope.astrometry['dec'].value, level = rms_astrometry)
 
 
 lightcurve = np.c_[roman_telescope.lightcurve['time'].value,roman_telescope.lightcurve['flux'].value,roman_telescope.lightcurve['err_flux'].value]
