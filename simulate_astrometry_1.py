@@ -211,7 +211,24 @@ for mass in mass_grid:
     for trial in range(N_trials):
         u0_trial = np.random.uniform(0.1, 0.3)
         rms_trial = np.random.uniform(0.1, 0.2)
-        params = [t0, u0_trial, thetaE/mu*365.25, thetaE, 1/Ds, -14.901418237131544, -6.013223990947537, -30.0, 270.0, 0.15843220222104726, -0.20748697386621207, 307.3813961361, 1086.2263480900185]
+        phi = np.random.uniform(0, 2*np.pi)
+        piE_N = (pirel / thetaE) * np.cos(phi)
+        piE_E = (pirel / thetaE) * np.sin(phi)
+        t0_trial = t0_in_Roman_windows(time, t0)
+        params = [t0_trial, 
+                  u0_trial, 
+                  tE, 
+                  thetaE, 
+                  1/Ds, 
+                  piE_N, 
+                  piE_E, 
+                  -30.0, 
+                  270.0, 
+                  0.15843220222104726, 
+                  -0.20748697386621207, 
+                  307.3813961361, 
+                  1086.2263480900185]
+        
 
         roman_event = pyLIMA_event_simulation(roman_telescope, ra=270, dec=-30)
         pspl = pyLIMA.models.PSPL_model.PSPLmodel(roman_event, parallax=['Full', t0])
@@ -256,8 +273,10 @@ for mass in mass_grid:
         try:
             trf = TRF_fit.TRFfit(pspl2)
             trf.model_parameters_guess = params[:-2]
-            trf.fit_parameters['tE'][1]      = [0.1, 10000]
-            trf.fit_parameters['theta_E'][1] = [0, 100]
+            trf.fit_parameters['tE'][1]  = [1, 5000]
+            trf.fit_parameters['theta_E'][1] = [0.1, 200]
+            trf.fit_parameters['piEN'][1] = [-2, 2]
+            trf.fit_parameters['piEE'][1] = [-2, 2]
             trf.fit()
 
             best = trf.fit_results['best_model']
@@ -266,10 +285,12 @@ for mass in mass_grid:
             chi2_phot, chi2_astro = compute_chi2(roman_telescope2, pspl2, best)
             chi2_total = chi2_phot + chi2_astro
 
-            sample       = np.random.multivariate_normal(best, cov, 10000)
-            thetaE_fit   = sample[:, 3]
-            piE_fit      = np.sqrt(sample[:, 9]**2 + sample[:, 10]**2)
-            mass_samples = thetaE_fit / 8.144 / piE_fit
+            sample  = np.random.multivariate_normal(best, cov, 10000)
+            thetaE_fit = np.abs(sample[:, 3])
+            piE_fit = np.sqrt(sample[:, 5]**2 + sample[:, 6]**2)
+            valid = piE_fit > 0
+            mass_samples = np.abs(sample[valid, 3]) / (8.144 * piE_fit[valid])
+            mass_samples = mass_samples[(mass_samples > 0) & (mass_samples < 1e5)] # clip
 
             mass_recovered = np.median(mass_samples)
             mass_error     = np.std(mass_samples)
@@ -326,8 +347,11 @@ for mass in mass_grid:
                 'confirmed_BH':     False
             })
 
+            print(list(trf.fit_parameters.keys()))
+
 df_mass = pd.DataFrame(results_mass_study)
 df_mass.to_csv('results_mass.csv', index=False)
 print(df_mass)
+
 
 
