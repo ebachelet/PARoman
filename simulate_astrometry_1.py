@@ -91,13 +91,20 @@ def t0_in_Roman_windows(time, t0):
 
     return t0
 
+def build_roman_time():
+    # Time scale matching Roma's realistic cadence
+    cadence_days = 15.0 / (60.0 * 24.0) # 15 min per day
+    season1 = np.arange(0.0, 72.0, cadence_days)
+    season2 = np.arange(72.0 + 365*2, 72.0 + 365*2 + 72, cadence_days)
+    return np.concatenate([season1, season2]) + 2458750.0
+
 
 def pyLIMA_telescope_simulation(time):
     try:
         roman_positions = np.load("roman_ephemerides.npy")
         roman = pyLIMA.simulations.simulator.simulate_a_telescope(
             "Roman",
-            timestamps=time,pixel_scale=0.11,
+            timestamps=time, pixel_scale=0.11,
             location="Space",
             spacecraft_name="L2",
             spacecraft_positions={
@@ -106,21 +113,19 @@ def pyLIMA_telescope_simulation(time):
             },
             astrometry=True,
         )
-
     except:
         roman = pyLIMA.simulations.simulator.simulate_a_telescope(
             "Roman",
-            timestamps=time,pixel_scale=0.11,
+            timestamps=time, pixel_scale=0.11,
             location="Space",
             spacecraft_name="L2",
             astrometry=True,
         )
         roman.initialize_positions()
-        np.save(
-            "roman_ephemerides.npy", roman.spacecraft_positions["photometry"]
-        )
-
-    return roman
+        roman_positions = roman.spacecraft_positions["photometry"]
+        np.save("roman_ephemerides.npy", roman_positions)
+ 
+    return roman, roman_positions
 
 
 def pyLIMA_event_simulation(roman_telescope, ra=270, dec=-30):
@@ -174,8 +179,10 @@ def astrometric_noise(ra,dec, level = 5): #mas
     return obs_ra,obs_dec
 
 output_dir = './output/'
-roman_positions = np.load("roman_ephemerides.npy")
-time = roman_positions[:,0]
+#roman_positions = np.load("roman_ephemerides.npy")
+#time = roman_positions[:,0]
+time = build_roman_time()
+
 
 t0 = 2458750                     # Time of maximum (HJD)
 Ds = 8.                         # Source distance (kpc)
@@ -189,14 +196,14 @@ mu = 6                           # Relative proper motion (mas/yr)
 rms_astrometry = 0.15                # Astrometric error (mas)
 
 # Mass grid
-mass_grid = np.logspace(np.log10(3), np.log10(1000), 20)
+mass_grid = np.logspace(np.log10(3), np.log10(100), 20)
 
 N_trials = 20
 
 results_mass_study = []
 
 # Build telescope
-roman_telescope = pyLIMA_telescope_simulation(time)
+roman_telescope, roman_positions = pyLIMA_telescope_simulation(time)
 
 
 for mass in mass_grid:
@@ -209,7 +216,7 @@ for mass in mass_grid:
     print('thetaE = ', thetaE)
 
     for trial in range(N_trials):
-        u0_trial = np.random.uniform(0.1, 0.3)
+        u0_trial = np.random.uniform(-1, 1)
         rms_trial = np.random.uniform(0.1, 0.2)
         phi = np.random.uniform(0, 2*np.pi)
         piE_N = (pirel / thetaE) * np.cos(phi)
@@ -227,7 +234,7 @@ for mass in mass_grid:
                   0.15843220222104726, 
                   -0.20748697386621207, 
                   307.3813961361, 
-                  1086.2263480900185]
+                  0]
         
 
         roman_event = pyLIMA_event_simulation(roman_telescope, ra=270, dec=-30)
@@ -277,6 +284,7 @@ for mass in mass_grid:
             trf.fit_parameters['theta_E'][1] = [0.1, 200]
             trf.fit_parameters['piEN'][1] = [-2, 2]
             trf.fit_parameters['piEE'][1] = [-2, 2]
+            trf.fit_parameters['u0'][1] = [-1,  1]
             trf.fit()
 
             best = trf.fit_results['best_model']
