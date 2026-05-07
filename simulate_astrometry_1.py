@@ -217,7 +217,7 @@ for mass in mass_grid:
 
     for trial in range(N_trials):
         u0_trial = np.random.uniform(-1, 1)
-        rms_trial = np.random.uniform(0.1, 0.2)
+        rms_trial = np.random.uniform(0.3, 0.5)
         phi = np.random.uniform(0, 2*np.pi)
         piE_N = (pirel / thetaE) * np.cos(phi)
         piE_E = (pirel / thetaE) * np.sin(phi)
