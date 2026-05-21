@@ -71,7 +71,7 @@ def t0_in_Roman_windows(time, t0):
 
     windows = []
 
-    for i in range(6):
+    for i in range(10):
         mask = (time < tend) & (time > tstart)
 
         windows.append(time[mask])
@@ -83,7 +83,7 @@ def t0_in_Roman_windows(time, t0):
         except:
             pass
 
-    choosen_one = np.random.choice([0, 1, 2, 3, 4, 5])
+    choosen_one = np.random.choice(range(10))
 
     window = windows[choosen_one]
 
@@ -93,10 +93,29 @@ def t0_in_Roman_windows(time, t0):
 
 def build_roman_time():
     # Time scale matching Roma's realistic cadence
-    cadence_days = 15.0 / (60.0 * 24.0) # 15 min per day
-    season1 = np.arange(0.0, 72.0, cadence_days)
-    season2 = np.arange(72.0 + 365*2, 72.0 + 365*2 + 72, cadence_days)
-    return np.concatenate([season1, season2]) + 2458750.0
+    # 6 high-cadence seasons of 72 days at 12.1-min sampling
+    # 4 low-cadence seasons of 72 days at 3-day sampling
+    cadence_high = 12.1 / (60.0 * 24.0)
+    cadence_low  = 3.0
+    year = 365.25
+
+    # years 1 and 2
+    s1 = np.arange(0, 72, cadence_high)
+    s2 = np.arange(year*0.5, year*0.5 + 72, cadence_high)
+    s3 = np.arange(year*1.0, year*1.0 + 72, cadence_high)
+
+    # year 3
+    s4 = np.arange(year*2.0, year*2.0 + 72, cadence_low)
+    s5 = np.arange(year*2.5, year*2.5 + 72, cadence_low)
+    s6 = np.arange(year*3.0, year*3.0 + 72, cadence_low)
+    s7 = np.arange(year*3.5, year*3.5 + 72, cadence_low)
+
+    # years 4 and 5
+    s8  = np.arange(year*4.0, year*4.0 + 72, cadence_high)
+    s9  = np.arange(year*4.5, year*4.5 + 72, cadence_high)
+    s10 = np.arange(year*5.0, year*5.0 + 72, cadence_high)
+
+    return np.concatenate([s1,s2,s3,s4,s5,s6,s7,s8,s9,s10]) + 2458750.0
 
 
 def pyLIMA_telescope_simulation(time):
@@ -198,7 +217,7 @@ rms_astrometry = 0.15                # Astrometric error (mas)
 # Mass grid
 mass_grid = np.logspace(np.log10(3), np.log10(100), 20)
 
-N_trials = 20
+N_trials = 10
 
 results_mass_study = []
 
@@ -217,7 +236,7 @@ for mass in mass_grid:
 
     for trial in range(N_trials):
         u0_trial = np.random.uniform(-1, 1)
-        rms_trial = np.random.uniform(0.3, 0.5)
+        rms_trial = np.random.uniform(1, 10)
         phi = np.random.uniform(0, 2*np.pi)
         piE_N = (pirel / thetaE) * np.cos(phi)
         piE_E = (pirel / thetaE) * np.sin(phi)
@@ -235,7 +254,7 @@ for mass in mass_grid:
                   -0.20748697386621207, 
                   307.3813961361, 
                   0]
-        
+              
 
         roman_event = pyLIMA_event_simulation(roman_telescope, ra=270, dec=-30)
         pspl = pyLIMA.models.PSPL_model.PSPLmodel(roman_event, parallax=['Full', t0])
@@ -287,6 +306,22 @@ for mass in mass_grid:
             trf.fit_parameters['u0'][1] = [-1,  1]
             trf.fit()
 
+
+            #from pyLIMA.outputs import pyLIMA_plots
+
+            #from pyLIMA.fits import TRF_fit,LM_fit,MCMC_fit,DE_fit
+
+            #trf = TRF_fit.TRFfit(pspl2)
+            #trf.model_parameters_guess = params[:-2]
+            #trf.fit()#computational_pool=pool)
+
+            #trf.fit_outputs()
+
+            #plt.show()
+            
+            #breakpoint()
+       
+
             best = trf.fit_results['best_model']
             cov  = trf.fit_results['covariance_matrix']
 
@@ -301,10 +336,10 @@ for mass in mass_grid:
             mass_samples = mass_samples[(mass_samples > 0) & (mass_samples < 1e5)] # clip
 
             mass_recovered = np.median(mass_samples)
-            mass_error     = np.std(mass_samples)
+            mass_error = np.std(mass_samples)
 
             # Threshold levels relative to chi2_total
-            chi2_10pct  = chi2_total * 0.10   # 10% of measured chi2
+            chi2_10pct = chi2_total * 0.10   # 10% of measured chi2
             chi2_100pct = 160.0               # fixed detection threshold
             chi2_200pct = 320.0               # twice detection threshold
 
@@ -360,6 +395,8 @@ for mass in mass_grid:
 df_mass = pd.DataFrame(results_mass_study)
 df_mass.to_csv('results_mass.csv', index=False)
 print(df_mass)
+
+
 
 
 
