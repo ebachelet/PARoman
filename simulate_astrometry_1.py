@@ -212,12 +212,14 @@ Dl = 3.                          # Lens distance (kpc)
 
 mu = 6                           # Relative proper motion (mas/yr)
 
-rms_astrometry = 0.15                # Astrometric error (mas)
+#rms_astrometry = 0.15                # Astrometric error (mas)
+
+year = 365.25
 
 # Mass grid
 mass_grid = np.logspace(np.log10(3), np.log10(100), 20)
 
-N_trials = 10
+N_trials = 2
 
 results_mass_study = []
 
@@ -241,6 +243,13 @@ for mass in mass_grid:
         piE_N = (pirel / thetaE) * np.cos(phi)
         piE_E = (pirel / thetaE) * np.sin(phi)
         t0_trial = t0_in_Roman_windows(time, t0)
+
+        season_starts = 2458750 + np.array([0, year * 0.5, year * 1.0, year * 2.0, year * 2.5, year * 3.0, year * 3.5, year * 4.0, year * 4.5, year * 5.0, ])
+        nearest_season = np.min(np.abs(season_starts - t0_trial))
+        poorly_sampled = nearest_season > tE * 0.5
+        if poorly_sampled:
+            print(f"t0 poorly sampled for tE={tE:.0f} days")
+
         params = [t0_trial, 
                   u0_trial, 
                   tE, 
@@ -299,36 +308,51 @@ for mass in mass_grid:
         try:
             trf = TRF_fit.TRFfit(pspl2)
             trf.model_parameters_guess = params[:-2]
-            trf.fit_parameters['tE'][1]  = [1, 5000]
+            trf.fit_parameters['tE'][1] = [tE * 0.5, tE * 2.0]
             trf.fit_parameters['theta_E'][1] = [0.1, 200]
             trf.fit_parameters['piEN'][1] = [-2, 2]
             trf.fit_parameters['piEE'][1] = [-2, 2]
             trf.fit_parameters['u0'][1] = [-1,  1]
             trf.fit()
 
+            ################################################
 
-            #from pyLIMA.outputs import pyLIMA_plots
+            from pyLIMA.outputs import pyLIMA_plots
 
-            #from pyLIMA.fits import TRF_fit,LM_fit,MCMC_fit,DE_fit
+            from pyLIMA.fits import TRF_fit,LM_fit,MCMC_fit,DE_fit
 
-            #trf = TRF_fit.TRFfit(pspl2)
-            #trf.model_parameters_guess = params[:-2]
-            #trf.fit()#computational_pool=pool)
+            trf = TRF_fit.TRFfit(pspl2)
+            trf.model_parameters_guess = params[:-2]
+            trf.fit()#computational_pool=pool)
 
-            #trf.fit_outputs()
+            trf.fit_outputs()
 
-            #plt.show()
+            plt.show()
             
-            #breakpoint()
-       
+            breakpoint()
+
+            ################################################
 
             best = trf.fit_results['best_model']
             cov  = trf.fit_results['covariance_matrix']
 
+            if np.any(np.diag(cov) < 0):
+                print(f"  Warning: bad covariance at M={mass:.1f}, trial={trial}")
+
             chi2_phot, chi2_astro = compute_chi2(roman_telescope2, pspl2, best)
             chi2_total = chi2_phot + chi2_astro
 
-            sample  = np.random.multivariate_normal(best, cov, 10000)
+            try:
+                # Force covariance to be symmetric positive definite
+                cov_safe = (cov + cov.T) / 2
+                eigvals = np.linalg.eigvalsh(cov_safe)
+                if np.any(eigvals < 0):
+                    cov_safe += (-eigvals.min() + 1e-10) * np.eye(len(best))
+                sample = np.random.multivariate_normal(best, cov_safe, 10000)
+            except Exception as e:
+                print(f"  Sampling failed: {e}")
+                raise
+
             thetaE_fit = np.abs(sample[:, 3])
             piE_fit = np.sqrt(sample[:, 5]**2 + sample[:, 6]**2)
             valid = piE_fit > 0
@@ -362,7 +386,8 @@ for mass in mass_grid:
                 'chi2_200pct':      chi2_200pct,
                 'detected':         chi2_total > chi2_100pct,
                 'strong_detection': chi2_total > chi2_200pct,
-                'confirmed_BH':     mass_recovered - 3*mass_error > 3.0
+                'confirmed_BH':     mass_recovered - 3*mass_error > 3.0,
+                'tE_in_survey':     tE < 72 * 6            # Avoid events with tE bigger than 72
             })
 
         except Exception as e:
@@ -387,7 +412,8 @@ for mass in mass_grid:
                 'chi2_200pct':      320.0,
                 'detected':         False,
                 'strong_detection': False,
-                'confirmed_BH':     False
+                'confirmed_BH':     False,
+                'tE_in_survey':     tE < 72 * 6,            # Avoid events with tE bigger than 72
             })
 
             print(list(trf.fit_parameters.keys()))
