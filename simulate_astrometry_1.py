@@ -205,7 +205,7 @@ time = build_roman_time()
 
 t0 = 2458750                     # Time of maximum (HJD)
 Ds = 8.                         # Source distance (kpc)
-Dl = 3.                          # Lens distance (kpc)
+#Dl = 3.                          # Lens distance (kpc)
 #mass = 30                       # Lens mass (Solar masses)
 #pirel = 1/Dl-1/Ds                
 #thetaE = (8.144*mass*pirel)**0.5 
@@ -229,8 +229,11 @@ roman_telescope, roman_positions = pyLIMA_telescope_simulation(time)
 
 for mass in mass_grid:
     print(f"\nSimulating M = {mass:.1f} M☉")
-    
+
+    # Dl
+    Dl = np.random.uniform(1, 4)
     pirel = 1/Dl - 1/Ds
+    
     thetaE = (8.144 * mass * pirel)**0.5
     tE = thetaE/mu * 365.25
     print('tE = ', tE)
@@ -239,30 +242,37 @@ for mass in mass_grid:
     for trial in range(N_trials):
         u0_trial = np.random.uniform(-1, 1)
         rms_trial = np.random.uniform(1, 10)
+
+        # Move Dl here later
+        
         phi = np.random.uniform(0, 2*np.pi)
         piE_N = (pirel / thetaE) * np.cos(phi)
         piE_E = (pirel / thetaE) * np.sin(phi)
+        piE_true = np.sqrt(piE_N**2 + piE_E**2)
+
         t0_trial = t0_in_Roman_windows(time, t0)
 
-        season_starts = 2458750 + np.array([0, year * 0.5, year * 1.0, year * 2.0, year * 2.5, year * 3.0, year * 3.5, year * 4.0, year * 4.5, year * 5.0, ])
-        nearest_season = np.min(np.abs(season_starts - t0_trial))
-        poorly_sampled = nearest_season > tE * 0.5
-        if poorly_sampled:
-            print(f"t0 poorly sampled for tE={tE:.0f} days")
+        mu_N = pirel * (piE_N / piE_true)
+        mu_E = pirel * (piE_E / piE_true)
 
-        params = [t0_trial, 
-                  u0_trial, 
-                  tE, 
-                  thetaE, 
-                  1/Ds, 
-                  piE_N, 
-                  piE_E, 
-                  -30.0, 
-                  270.0, 
-                  0.15843220222104726, 
-                  -0.20748697386621207, 
-                  307.3813961361, 
-                  0]
+        print(f"piE_true = {piE_true:.4f}")
+        print(f" Expected astro shift: {thetaE:.2f} mas, noise: {rms_trial:.2f} mas")  
+
+        season_starts = 2458750 + np.array([0, year * 0.5, year * 1.0, year * 2.0, year * 2.5, year * 3.0, year * 3.5, year * 4.0, year * 4.5, year * 5.0, ])
+        
+        params = [t0_trial,
+                    u0_trial,
+                    tE,
+                    thetaE,
+                    1/Ds,
+                    mu_N,      # piE_N old
+                    mu_E,      # piE_E old
+                    -30.0,      # position_N
+                    270.0,      # position_E
+                    piE_N,       # mu_N old
+                    piE_E,       # mu_E old
+                    307.3813961361,
+                    0]
               
 
         roman_event = pyLIMA_event_simulation(roman_telescope, ra=270, dec=-30)
@@ -307,29 +317,33 @@ for mass in mass_grid:
 
         try:
             trf = TRF_fit.TRFfit(pspl2)
-            trf.model_parameters_guess = params[:-2]
             trf.fit_parameters['tE'][1] = [tE * 0.5, tE * 2.0]
             trf.fit_parameters['theta_E'][1] = [0.1, 200]
-            trf.fit_parameters['piEN'][1] = [-2, 2]
-            trf.fit_parameters['piEE'][1] = [-2, 2]
-            trf.fit_parameters['u0'][1] = [-1,  1]
+            trf.fit_parameters['piEN'][1] = [-0.5, 0.5]
+            trf.fit_parameters['piEE'][1] = [-0.5, 0.5]
+            trf.fit_parameters['u0'][1] = [-1, 1]
+            trf.model_parameters_guess = params[:11]
             trf.fit()
+
+            print(f" Guess: {params[:-2]}")
+            print(f" piEN bounds: {trf.fit_parameters['piEN']}")
+            print(f" Guess length: {len(params[:-2])}, n params: {len(trf.fit_parameters)}")
 
             ################################################
 
-            from pyLIMA.outputs import pyLIMA_plots
+            #from pyLIMA.outputs import pyLIMA_plots
 
-            from pyLIMA.fits import TRF_fit,LM_fit,MCMC_fit,DE_fit
+            #from pyLIMA.fits import TRF_fit,LM_fit,MCMC_fit,DE_fit
 
-            trf = TRF_fit.TRFfit(pspl2)
-            trf.model_parameters_guess = params[:-2]
-            trf.fit()#computational_pool=pool)
+            #trf = TRF_fit.TRFfit(pspl2)
+            #trf.model_parameters_guess = params[:-2]
+            #trf.fit()#computational_pool=pool)
 
-            trf.fit_outputs()
+            #trf.fit_outputs()
 
-            plt.show()
+            #plt.show()
             
-            breakpoint()
+            #breakpoint()
 
             ################################################
 
@@ -342,6 +356,8 @@ for mass in mass_grid:
             chi2_phot, chi2_astro = compute_chi2(roman_telescope2, pspl2, best)
             chi2_total = chi2_phot + chi2_astro
 
+            print(f"  chi2_phot={chi2_phot:.0f}  chi2_astro={chi2_astro:.0f}  ratio={chi2_astro/chi2_total:.2%}")
+
             try:
                 # Force covariance to be symmetric positive definite
                 cov_safe = (cov + cov.T) / 2
@@ -353,11 +369,11 @@ for mass in mass_grid:
                 print(f"  Sampling failed: {e}")
                 raise
 
-            thetaE_fit = np.abs(sample[:, 3])
+            thetaE_fit = (sample[:, 3])
             piE_fit = np.sqrt(sample[:, 5]**2 + sample[:, 6]**2)
-            valid = piE_fit > 0
-            mass_samples = np.abs(sample[valid, 3]) / (8.144 * piE_fit[valid])
-            mass_samples = mass_samples[(mass_samples > 0) & (mass_samples < 1e5)] # clip
+            valid = (piE_fit > 0) & (thetaE_fit > 0)
+            mass_samples = thetaE_fit[valid] / (8.144 * piE_fit[valid])
+            mass_samples = mass_samples[(mass_samples > 3.0) & (mass_samples < 200.0)] # clip, change with mass grid
 
             mass_recovered = np.median(mass_samples)
             mass_error = np.std(mass_samples)
@@ -417,6 +433,7 @@ for mass in mass_grid:
             })
 
             print(list(trf.fit_parameters.keys()))
+            print(f" Guess length: {len(params[:-2])}, params keys: {len(trf.fit_parameters)}")
 
 df_mass = pd.DataFrame(results_mass_study)
 df_mass.to_csv('results_mass.csv', index=False)
