@@ -34,6 +34,11 @@ def compute_chi2(telescope, pspl_model, best_params):
     dec_obs = telescope.astrometry['dec'].value
     err_ra  = telescope.astrometry['err_ra'].value
     err_dec = telescope.astrometry['err_dec'].value
+
+    # Temp
+    # print(f"  ra_model range: {ra_model.min():.6f} to {ra_model.max():.6f}")
+    # print(f"  ra_obs range: {ra_obs.min():.6f} to {ra_obs.max():.6f}")
+    # print(f"  err_ra sample:  {err_ra[0]:.2e}")
     
     chi2_ra    = np.sum(((ra_obs  - ra_model)  / err_ra)  ** 2)
     chi2_dec   = np.sum(((dec_obs - dec_model) / err_dec) ** 2)
@@ -252,8 +257,8 @@ for mass in mass_grid:
 
         t0_trial = t0_in_Roman_windows(time, t0)
 
-        mu_N = pirel * (piE_N / piE_true)
-        mu_E = pirel * (piE_E / piE_true)
+        mu_N = (piE_N / piE_true) * (thetaE / tE) * 365.25
+        mu_E = (piE_E / piE_true) * (thetaE / tE) * 365.25
 
         print(f"piE_true = {piE_true:.4f}")
         print(f" Expected astro shift: {thetaE:.2f} mas, noise: {rms_trial:.2f} mas")  
@@ -322,12 +327,14 @@ for mass in mass_grid:
             trf.fit_parameters['piEN'][1] = [-0.5, 0.5]
             trf.fit_parameters['piEE'][1] = [-0.5, 0.5]
             trf.fit_parameters['u0'][1] = [-1, 1]
+            trf.fit_parameters['fsource_Roman'][1] = [1.0, 1e5]
+            trf.fit_parameters['ftotal_Roman'][1]  = [0.0, 1e5]
             trf.model_parameters_guess = params[:11]
             trf.fit()
 
             print(f" Guess: {params[:-2]}")
             print(f" piEN bounds: {trf.fit_parameters['piEN']}")
-            print(f" Guess length: {len(params[:-2])}, n params: {len(trf.fit_parameters)}")
+            # print(f" Guess length: {len(params[:-2])}, n params: {len(trf.fit_parameters)}")
 
             ################################################
 
@@ -348,7 +355,13 @@ for mass in mass_grid:
             ################################################
 
             best = trf.fit_results['best_model']
-            cov  = trf.fit_results['covariance_matrix']
+            cov = trf.fit_results['covariance_matrix']
+
+            # Diagnostic
+            piE_best = np.sqrt(best[9]**2 + best[10]**2)
+            mass_naive = best[3] / (8.144 * piE_best)
+            print(f"  thetaE_fit={best[3]:.3f}, piE_fit={piE_best:.4f}, naive_mass={mass_naive:.2f}")
+            print(f"  thetaE_true={thetaE:.3f}, piE_true={piE_true:.4f}, true_mass={mass:.2f}")
 
             if np.any(np.diag(cov) < 0):
                 print(f"  Warning: bad covariance at M={mass:.1f}, trial={trial}")
@@ -358,25 +371,44 @@ for mass in mass_grid:
 
             print(f"  chi2_phot={chi2_phot:.0f}  chi2_astro={chi2_astro:.0f}  ratio={chi2_astro/chi2_total:.2%}")
 
-            try:
-                # Force covariance to be symmetric positive definite
-                cov_safe = (cov + cov.T) / 2
-                eigvals = np.linalg.eigvalsh(cov_safe)
-                if np.any(eigvals < 0):
-                    cov_safe += (-eigvals.min() + 1e-10) * np.eye(len(best))
-                sample = np.random.multivariate_normal(best, cov_safe, 10000)
-            except Exception as e:
-                print(f"  Sampling failed: {e}")
-                raise
+            #############################################################################################################
+            ## TRF block
 
-            thetaE_fit = (sample[:, 3])
-            piE_fit = np.sqrt(sample[:, 5]**2 + sample[:, 6]**2)
-            valid = (piE_fit > 0) & (thetaE_fit > 0)
-            mass_samples = thetaE_fit[valid] / (8.144 * piE_fit[valid])
-            mass_samples = mass_samples[(mass_samples > 3.0) & (mass_samples < 200.0)] # clip, change with mass grid
+            #thetaE_best = best[3]
+            #piE_best = np.sqrt(best[9]**2 + best[10]**2)
+            #mass_recovered = thetaE_best / (8.144 * piE_best)
+
+            ## Diagonal covariance errors
+            #sig_thetaE = np.sqrt(abs(cov[3, 3]))
+            #sig_piEN = np.sqrt(abs(cov[9, 9]))
+            #sig_piEE = np.sqrt(abs(cov[10, 10]))
+            #sig_piE = np.sqrt((best[9]*sig_piEN)**2 + (best[10]*sig_piEE)**2) / piE_best
+            #mass_error = mass_recovered * np.sqrt((sig_thetaE/thetaE_best)**2 + (sig_piE/piE_best)**2)
+
+            #print(f"  mass_recovered={mass_recovered:.2f}, mass_error={mass_error:.2f}, true={mass:.2f}")
+
+            ##############################################################################################################
+
+            # MCMC for realistic uncertainties
+            mcmc = MCMC_fit.MCMCfit(pspl2)
+            mcmc.model_parameters_guess = best
+            mcmc.MCMC_links = 2000      # total steps per walker
+            mcmc.MCMC_walkers = 20      # number of walkers (small = fast)
+            mcmc.fit()
+
+            chains = mcmc.fit_results['MCMC_chains']  # shape: (n_walkers, n_steps, n_params)
+            flat = chains[:, chains.shape[1]//2:, :].reshape(-1, chains.shape[2])
+
+            thetaE_samples = flat[:, 3]
+            piE_samples = np.sqrt(flat[:, 9]**2 + flat[:, 10]**2)
+            valid = (piE_samples > 0) & (thetaE_samples > 0)
+            mass_samples = thetaE_samples[valid] / (8.144 * piE_samples[valid])
 
             mass_recovered = np.median(mass_samples)
             mass_error = np.std(mass_samples)
+            print(f"  MCMC mass_recovered={mass_recovered:.2f} +/- {mass_error:.2f}, true={mass:.2f}")
+
+            ################################################################################################################
 
             # Threshold levels relative to chi2_total
             chi2_10pct = chi2_total * 0.10   # 10% of measured chi2
