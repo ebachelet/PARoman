@@ -13,6 +13,8 @@ from pyLIMA.outputs import pyLIMA_plots
 
 from pyLIMA.fits import TRF_fit,LM_fit,MCMC_fit,DE_fit
 
+from multiprocessing import Pool
+
 import matplotlib.pyplot as plt
 
 def compute_chi2(telescope, pspl_model, best_params):
@@ -21,9 +23,9 @@ def compute_chi2(telescope, pspl_model, best_params):
     
     # Photometric chi2
     flux_model = model_output['photometry']
-    flux_obs   = telescope.lightcurve['flux'].value
-    err_flux   = telescope.lightcurve['err_flux'].value
-    chi2_phot  = np.sum(((flux_obs - flux_model) / err_flux) ** 2)
+    flux_obs = telescope.lightcurve['flux'].value
+    err_flux = telescope.lightcurve['err_flux'].value
+    chi2_phot = np.sum(((flux_obs - flux_model) / err_flux) ** 2)
     
     # Astrometric chi2 — pyLIMA returns shape (2, N): row 0 = ra, row 1 = dec
     astro_model = model_output['astrometry']
@@ -40,8 +42,8 @@ def compute_chi2(telescope, pspl_model, best_params):
     # print(f"  ra_obs range: {ra_obs.min():.6f} to {ra_obs.max():.6f}")
     # print(f"  err_ra sample:  {err_ra[0]:.2e}")
     
-    chi2_ra    = np.sum(((ra_obs  - ra_model)  / err_ra)  ** 2)
-    chi2_dec   = np.sum(((dec_obs - dec_model) / err_dec) ** 2)
+    chi2_ra = np.sum(((ra_obs  - ra_model)  / err_ra)  ** 2)
+    chi2_dec = np.sum(((dec_obs - dec_model) / err_dec) ** 2)
     chi2_astro = chi2_ra + chi2_dec
     
     return chi2_phot, chi2_astro
@@ -210,21 +212,12 @@ time = build_roman_time()
 
 t0 = 2458750                     # Time of maximum (HJD)
 Ds = 8.                         # Source distance (kpc)
-#Dl = 3.                          # Lens distance (kpc)
-#mass = 30                       # Lens mass (Solar masses)
-#pirel = 1/Dl-1/Ds                
-#thetaE = (8.144*mass*pirel)**0.5 
-
-mu = 6                           # Relative proper motion (mas/yr)
-
-#rms_astrometry = 0.15                # Astrometric error (mas)
-
 year = 365.25
 
 # Mass grid
-mass_grid = np.logspace(np.log10(3), np.log10(100), 20)
+mass_grid = np.logspace(np.log10(3), np.log10(100), 100)
 
-N_trials = 2
+N_trials = 4
 
 results_mass_study = []
 
@@ -235,20 +228,27 @@ roman_telescope, roman_positions = pyLIMA_telescope_simulation(time)
 for mass in mass_grid:
     print(f"\nSimulating M = {mass:.1f} M☉")
 
-    # Dl
-    Dl = np.random.uniform(1, 4)
-    pirel = 1/Dl - 1/Ds
-    
-    thetaE = (8.144 * mass * pirel)**0.5
-    tE = thetaE/mu * 365.25
-    print('tE = ', tE)
-    print('thetaE = ', thetaE)
-
     for trial in range(N_trials):
         u0_trial = np.random.uniform(-1, 1)
-        rms_trial = np.random.uniform(1, 10)
 
-        # Move Dl here later
+        mu = np.random.normal(6, 1)                 # Relative proper motion (mas/yr)
+
+        # Dl
+        Dl = np.random.uniform(1, Ds- 0.1)
+        pirel = 1/Dl - 1/Ds
+        
+        thetaE = (8.144 * mass * pirel)**0.5
+        tE = thetaE/mu * 365.25
+        print('tE = ', tE)
+        print('thetaE = ', thetaE)
+
+        mag_blend = np.random.uniform(16, 25)
+        fb = 10**((27.4 - mag_blend) / 2.5)
+
+        mag_source = np.random.triangular(16, 24, 25)
+        fsource = 10**((27.4 - mag_source) / 2.5)
+        ftotal = fsource + fb
+
         
         phi = np.random.uniform(0, 2*np.pi)
         piE_N = (pirel / thetaE) * np.cos(phi)
@@ -261,7 +261,7 @@ for mass in mass_grid:
         mu_E = (piE_E / piE_true) * (thetaE / tE) * 365.25
 
         print(f"piE_true = {piE_true:.4f}")
-        print(f" Expected astro shift: {thetaE:.2f} mas, noise: {rms_trial:.2f} mas")  
+        #print(f" Expected astro shift: {thetaE:.2f} mas, noise: {rms_trial:.2f} mas")  
 
         season_starts = 2458750 + np.array([0, year * 0.5, year * 1.0, year * 2.0, year * 2.5, year * 3.0, year * 3.5, year * 4.0, year * 4.5, year * 5.0, ])
         
@@ -276,8 +276,8 @@ for mass in mass_grid:
                     270.0,      # position_E
                     piE_N,       # mu_N old
                     piE_E,       # mu_E old
-                    307.3813961361,
-                    0]
+                    fsource,
+                    ftotal]
               
 
         roman_event = pyLIMA_event_simulation(roman_telescope, ra=270, dec=-30)
@@ -285,6 +285,21 @@ for mass in mass_grid:
 
         pyLIMA.simulations.simulator.simulate_lightcurve(pspl, pspl.compute_pyLIMA_parameters(params), add_noise=True)
         pyLIMA.simulations.simulator.simulate_astrometry(pspl, pspl.compute_pyLIMA_parameters(params), add_noise=False)
+
+        # SNR and error in magnitude
+        #rms_phot  = np.sqrt(fsource + 100)        #  noise = signal + background
+
+        flux_obs = roman_telescope.lightcurve['flux'].value
+        err_flux = roman_telescope.lightcurve['err_flux'].value
+
+        em = (2.5 / np.log(10)) * (err_flux / flux_obs)
+        max_em = np.nanmax(em)
+        snr_phot = 1.0 / max_em
+
+        # RMS
+        psf_fwhm_mas = 110.0
+        rms_trial = (psf_fwhm_mas * max_em)
+        rms_trial = np.clip(rms_trial, 1, 100.0)
 
         obs_ra, obs_dec = astrometric_noise(
             roman_telescope.astrometry['ra'].value,
@@ -322,6 +337,8 @@ for mass in mass_grid:
 
         try:
             trf = TRF_fit.TRFfit(pspl2)
+            te_factor = np.clip(1.0 + max_em * 10, 1.5, 5.0)
+            trf.fit_parameters['tE'][1] = [tE / te_factor, tE * te_factor]
             trf.fit_parameters['tE'][1] = [tE * 0.5, tE * 2.0]
             trf.fit_parameters['theta_E'][1] = [0.1, 200]
             trf.fit_parameters['piEN'][1] = [-0.5, 0.5]
@@ -372,41 +389,46 @@ for mass in mass_grid:
             print(f"  chi2_phot={chi2_phot:.0f}  chi2_astro={chi2_astro:.0f}  ratio={chi2_astro/chi2_total:.2%}")
 
             #############################################################################################################
-            ## TRF block
+            # TRF block
 
-            #thetaE_best = best[3]
-            #piE_best = np.sqrt(best[9]**2 + best[10]**2)
-            #mass_recovered = thetaE_best / (8.144 * piE_best)
+            thetaE_best = best[3]
+            piE_best = np.sqrt(best[9]**2 + best[10]**2)
+            mass_recovered = thetaE_best / (8.144 * piE_best)
 
-            ## Diagonal covariance errors
-            #sig_thetaE = np.sqrt(abs(cov[3, 3]))
-            #sig_piEN = np.sqrt(abs(cov[9, 9]))
-            #sig_piEE = np.sqrt(abs(cov[10, 10]))
-            #sig_piE = np.sqrt((best[9]*sig_piEN)**2 + (best[10]*sig_piEE)**2) / piE_best
-            #mass_error = mass_recovered * np.sqrt((sig_thetaE/thetaE_best)**2 + (sig_piE/piE_best)**2)
+            # Diagonal covariance errors
+            sig_thetaE = np.sqrt(abs(cov[3, 3]))
+            sig_piEN = np.sqrt(abs(cov[9, 9]))
+            sig_piEE = np.sqrt(abs(cov[10, 10]))
+            sig_piE = np.sqrt((best[9]*sig_piEN)**2 + (best[10]*sig_piEE)**2) / piE_best
+            mass_error = mass_recovered * np.sqrt((sig_thetaE/thetaE_best)**2 + (sig_piE/piE_best)**2)
 
-            #print(f"  mass_recovered={mass_recovered:.2f}, mass_error={mass_error:.2f}, true={mass:.2f}")
+
+            print(f"  mass_recovered={mass_recovered:.2f}, mass_error={mass_error:.2f}, true={mass:.2f}")
+
+            #breakpoint()
 
             ##############################################################################################################
 
-            # MCMC for realistic uncertainties
-            mcmc = MCMC_fit.MCMCfit(pspl2)
-            mcmc.model_parameters_guess = best
-            mcmc.MCMC_links = 2000      # total steps per walker
-            mcmc.MCMC_walkers = 20      # number of walkers (small = fast)
-            mcmc.fit()
+            ## MCMC for realistic uncertainties
+            #mcmc = MCMC_fit.MCMCfit(pspl2)
+            #mcmc.model_parameters_guess = best
+            #mcmc.MCMC_links = 10      # total steps per walker (min:1000)
+            #mcmc.MCMC_walkers = 2      # number of walkers (min:2)
 
-            chains = mcmc.fit_results['MCMC_chains']  # shape: (n_walkers, n_steps, n_params)
-            flat = chains[:, chains.shape[1]//2:, :].reshape(-1, chains.shape[2])
+            #with Pool(processes=8) as pool:
+            #    mcmc.fit(computational_pool=pool)
 
-            thetaE_samples = flat[:, 3]
-            piE_samples = np.sqrt(flat[:, 9]**2 + flat[:, 10]**2)
-            valid = (piE_samples > 0) & (thetaE_samples > 0)
-            mass_samples = thetaE_samples[valid] / (8.144 * piE_samples[valid])
+            #chains = mcmc.fit_results['MCMC_chains']  # shape: (n_walkers, n_steps, n_params)
+            #flat = chains[:, chains.shape[1]//2:, :].reshape(-1, chains.shape[2])
 
-            mass_recovered = np.median(mass_samples)
-            mass_error = np.std(mass_samples)
-            print(f"  MCMC mass_recovered={mass_recovered:.2f} +/- {mass_error:.2f}, true={mass:.2f}")
+            #thetaE_samples = flat[:, 3]
+            #piE_samples = np.sqrt(flat[:, 9]**2 + flat[:, 10]**2)
+            #valid = (piE_samples > 0) & (thetaE_samples > 0)
+            #mass_samples = thetaE_samples[valid] / (8.144 * piE_samples[valid])
+
+            #mass_recovered = np.median(mass_samples)
+            #mass_error = np.std(mass_samples)
+            #print(f"  MCMC mass_recovered={mass_recovered:.2f} +/- {mass_error:.2f}, true={mass:.2f}")
 
             ################################################################################################################
 
@@ -422,6 +444,17 @@ for mass in mass_grid:
                 'mass_input':       mass,
                 'mass_recovered':   mass_recovered,
                 'sigmaM':           mass_error,
+                'mu':               mu,
+                'mu_N':             mu_N,
+                'mu_E':             mu_E,
+                'pirel':            pirel,
+                'Ds':               Ds,
+                'Dl':               Dl,
+                'piE_true':         piE_true,
+                'max_em':           max_em,
+                'snr_phot':         snr_phot, 
+                'fsource':          fsource,    
+                'mag_source':       mag_source,
                 'u0':               u0_trial,
                 'rms_ast':          rms_trial,
                 'thetaE':           thetaE,
@@ -448,6 +481,17 @@ for mass in mass_grid:
                 'mass_input':       mass,
                 'mass_recovered':   np.nan,
                 'sigmaM':           np.nan,
+                'mu':               mu,
+                'mu_N':             mu_N,
+                'mu_E':             mu_E,
+                'pirel':            pirel,
+                'Ds':               Ds,
+                'Dl':               Dl,
+                'piE_true':         piE_true,
+                'max_em':           np.nan,
+                'snr_phot':         np.nan, 
+                'fsource':          fsource,   
+                'mag_source':       mag_source,
                 'u0':               u0_trial,
                 'rms_ast':          rms_trial,
                 'thetaE':           thetaE,
