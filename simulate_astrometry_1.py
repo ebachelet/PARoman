@@ -242,12 +242,11 @@ for mass in mass_grid:
         print('tE = ', tE)
         print('thetaE = ', thetaE)
 
-        mag_blend = np.random.uniform(16, 25)
-        fb = 10**((27.4 - mag_blend) / 2.5)
+        #fb
 
         mag_source = np.random.triangular(16, 24, 25)
         fsource = 10**((27.4 - mag_source) / 2.5)
-        ftotal = fsource + fb
+        ftotal = fsource + # fb
 
         
         phi = np.random.uniform(0, 2*np.pi)
@@ -389,46 +388,48 @@ for mass in mass_grid:
             print(f"  chi2_phot={chi2_phot:.0f}  chi2_astro={chi2_astro:.0f}  ratio={chi2_astro/chi2_total:.2%}")
 
             #############################################################################################################
-            # TRF block
+            ## TRF block
 
-            thetaE_best = best[3]
-            piE_best = np.sqrt(best[9]**2 + best[10]**2)
-            mass_recovered = thetaE_best / (8.144 * piE_best)
+            #thetaE_best = best[3]
+            #piE_best = np.sqrt(best[9]**2 + best[10]**2)
+            #mass_recovered = thetaE_best / (8.144 * piE_best)
 
-            # Diagonal covariance errors
-            sig_thetaE = np.sqrt(abs(cov[3, 3]))
-            sig_piEN = np.sqrt(abs(cov[9, 9]))
-            sig_piEE = np.sqrt(abs(cov[10, 10]))
-            sig_piE = np.sqrt((best[9]*sig_piEN)**2 + (best[10]*sig_piEE)**2) / piE_best
-            mass_error = mass_recovered * np.sqrt((sig_thetaE/thetaE_best)**2 + (sig_piE/piE_best)**2)
+            ## Diagonal covariance errors
+            #sig_thetaE = np.sqrt(abs(cov[3, 3]))
+            #sig_piEN = np.sqrt(abs(cov[9, 9]))
+            #sig_piEE = np.sqrt(abs(cov[10, 10]))
+            #sig_piE = np.sqrt((best[9]*sig_piEN)**2 + (best[10]*sig_piEE)**2) / piE_best
+            #mass_error = mass_recovered * np.sqrt((sig_thetaE/thetaE_best)**2 + (sig_piE/piE_best)**2)
 
 
-            print(f"  mass_recovered={mass_recovered:.2f}, mass_error={mass_error:.2f}, true={mass:.2f}")
+            #print(f"  mass_recovered={mass_recovered:.2f}, mass_error={mass_error:.2f}, true={mass:.2f}")
 
             #breakpoint()
 
             ##############################################################################################################
+            # MCMC block
 
-            ## MCMC for realistic uncertainties
-            #mcmc = MCMC_fit.MCMCfit(pspl2)
-            #mcmc.model_parameters_guess = best
-            #mcmc.MCMC_links = 10      # total steps per walker (min:1000)
-            #mcmc.MCMC_walkers = 2      # number of walkers (min:2)
+            mcmc = MCMC_fit.MCMCfit(pspl2)
+            mcmc.model_parameters_guess = best
+            mcmc.MCMC_links = 1000      # total steps per walker (min:1000)
+            mcmc.MCMC_walkers = 2      # number of walkers (min:2)
 
-            #with Pool(processes=8) as pool:
-            #    mcmc.fit(computational_pool=pool)
+            with Pool(processes=8) as pool:
+                mcmc.fit(computational_pool=pool)
 
-            #chains = mcmc.fit_results['MCMC_chains']  # shape: (n_walkers, n_steps, n_params)
-            #flat = chains[:, chains.shape[1]//2:, :].reshape(-1, chains.shape[2])
+            chains = mcmc.fit_results['MCMC_chains']  # shape: (n_walkers, n_steps, n_params)
+            flat = chains[:, chains.shape[1]//2:, :].reshape(-1, chains.shape[2])
 
-            #thetaE_samples = flat[:, 3]
-            #piE_samples = np.sqrt(flat[:, 9]**2 + flat[:, 10]**2)
-            #valid = (piE_samples > 0) & (thetaE_samples > 0)
-            #mass_samples = thetaE_samples[valid] / (8.144 * piE_samples[valid])
+            thetaE_samples = flat[:, 3]
+            piE_samples = np.sqrt(flat[:, 9]**2 + flat[:, 10]**2)
+            valid = (piE_samples > 0) & (thetaE_samples > 0)
+            mass_samples = thetaE_samples[valid] / (8.144 * piE_samples[valid])
 
-            #mass_recovered = np.median(mass_samples)
-            #mass_error = np.std(mass_samples)
-            #print(f"  MCMC mass_recovered={mass_recovered:.2f} +/- {mass_error:.2f}, true={mass:.2f}")
+            mass_recovered = np.median(mass_samples)
+            mass_error = np.std(mass_samples)
+            print(f"  MCMC mass_recovered={mass_recovered:.2f} +/- {mass_error:.2f}, true={mass:.2f}")
+
+            breakpoint()
 
             ################################################################################################################
 
